@@ -1,0 +1,14 @@
+<launch>
+    <!-- <node pkg="attn_scan_ros" type="attn_scan_weighted_pub.py" name="attn_pc" output="screen">
+    </node> -->
+
+    <node pkg="icp" type="icp_node.py" name="icp" output="screen">
+        <remap from="scan" to="scan_filtered" />
+        <!-- <remap from="scan" to="scan_pf_filtered" /> -->
+        <!-- <remap from="scan" to="scan_ltme_filtered" /> -->
+        <!-- <remap from="scan" to="scan_rp" /> -->
+    </node>
+
+    <!-- <node name="rviz" pkg="rviz" type="rviz" required="true"
+      args="-d $(find icp)/launch/rviz/icp.rviz" /> -->
+</launch>

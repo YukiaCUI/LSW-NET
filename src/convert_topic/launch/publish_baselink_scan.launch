@@ -1,0 +1,9 @@
+<launch>
+    <node pkg="convert_topic" type="publish_baselink_scan" name="publish_baselink_scan" output="screen">
+        <!-- <remap from="/scan" to="/scan_rp_filtered" /> -->
+        <remap from="/scan" to="/scan_filtered" />
+        <!-- <remap from="/scan2" to="/scan_filtered2" /> -->
+        <remap from="/scan2" to="/scan_filtered3" />
+        <param name="sick" value="false" />
+    </node>
+</launch>

@@ -53,4 +53,4 @@ PIPELINE:
   
 
 FILE_PATH:
-  /home/tju_dhj/Self_Feature_LO/data/dianxin6.npy
+  /media/cyj/DATA/Self_Feature_LO/src/point_cloud_processing/data/dianxin6.npy

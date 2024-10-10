@@ -7,6 +7,7 @@ from detector import Detector
 from config.config import Config
 from data import DataScan
 from tqdm import tqdm
+import os
 
 # 自定义点云数据集
 class PointCloudDataset(Dataset):
@@ -70,8 +71,16 @@ def process_point_cloud_data(point_cloud_data, batch_size, T):
 # 创建 Config 类的实例
 config = Config()
 
+# 获取当前工作目录
+cwd = os.getcwd()
+
+# 拼接相对路径
+config_path = '/media/cyj/DATA/Self_Feature_LO/src/point_cloud_processing/src/cfgs/ros_li2former.yaml'
+npy_path = '/media/cyj/DATA/Self_Feature_LO/src/point_cloud_processing/data/dianxin6_pre.npy'
+
+
 # 加载 YAML 配置文件
-config.load("/home/tju_dhj/Self_Feature_LO/src/point_cloud_processing/src/cfgs/ros_li2former.yaml")
+config.load(config_path)
 # 初始化 DataScan 类
 cutouter = DataScan(config)
 data_path = config("FILE_PATH")
@@ -81,8 +90,10 @@ point_cloud_data = np.load(data_path)
 for i in tqdm(range(point_cloud_data.shape[0]), desc="Processing scans"):
     scan = point_cloud_data[i, :]
     cutouts.append(cutouter(scan))
-save_to_numpy(cutouts, '/home/tju_dhj/Self_Feature_LO/data/dianxin6_pre.npy')
+    
+save_to_numpy(cutouts, npy_path)
 print(cutouts.shape)
+
 # 超参数设置
 B = 4  # batch size
 T = 10  # 每批次T帧

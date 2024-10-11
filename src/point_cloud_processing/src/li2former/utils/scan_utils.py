@@ -138,6 +138,7 @@ def scans2cutout(scans: np.ndarray, scan_phi: np.ndarray, stride: int=1, centere
         the cutout of scans (scans, times, cutouts)
     '''        
     num_scans, num_pts = scans.shape
+    # print("num_scans1: ",num_scans)
 
     # size (width) of the window
     dists = (
@@ -147,6 +148,8 @@ def scans2cutout(scans: np.ndarray, scan_phi: np.ndarray, stride: int=1, centere
     )
     half_alpha = np.arctan(0.5 * window_width / np.maximum(dists, 1e-2))
     
+    # print("num_scans1: ",num_scans)
+
     # cutout indices
     delta_alpha = 2.0 * half_alpha / (num_cutout_pts - 1)
 
@@ -168,6 +171,8 @@ def scans2cutout(scans: np.ndarray, scan_phi: np.ndarray, stride: int=1, centere
     inds_ct_high = np.clip(inds_ct_low + 1, 0, num_pts - 1).astype(np.int64)
     inds_ct_ratio = np.clip(inds_ct - inds_ct_low, 0.0, 1.0)
     inds_offset = (np.arange(num_scans).reshape(1, num_scans, 1) * num_pts) 
+
+    # print("num_scans2: ",num_scans)
 
     ct_low = np.take(scans, inds_ct_low + inds_offset)
     ct_high = np.take(scans, inds_ct_high + inds_offset)
@@ -201,6 +206,10 @@ def scans2cutout(scans: np.ndarray, scan_phi: np.ndarray, stride: int=1, centere
                 num_cutout_pts, s_area, num_scans, dists.shape[1]
             ).mean(axis=1)
             ct[:, area_mask] = ct_area[:, area_mask]
+            
+            # print("ct.shape1: ",ct.shape)
+    
+    # print("num_scans3: ",num_scans)
 
     # normalize cutout
     ct[outbound_mask] = padding_val
@@ -208,5 +217,11 @@ def scans2cutout(scans: np.ndarray, scan_phi: np.ndarray, stride: int=1, centere
     if centered:
         ct = ct - dists
         ct = ct / window_depth
+    
+    # print("ct.shape2: ",ct.shape)
 
+    # ct_end =np.ascontiguousarray(ct.transpose((2, 1, 0)), dtype=np.float32) 
+    
+    # print("ct_end.shape: ",ct_end.shape)
+    
     return np.ascontiguousarray(ct.transpose((2, 1, 0)), dtype=np.float32) 

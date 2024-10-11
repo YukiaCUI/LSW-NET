@@ -9,6 +9,7 @@ from torch import nn, Tensor
 import numpy as np
 from typing import Tuple
 
+
 from .backbone import buildBackbone
 from .transformer.st_encoder import Encoder
 from .losses import FormerCriterion

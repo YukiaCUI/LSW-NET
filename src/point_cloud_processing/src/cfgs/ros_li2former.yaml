@@ -54,3 +54,33 @@ PIPELINE:
 
 FILE_PATH:
   /media/cyj/DATA/Self_Feature_LO/src/point_cloud_processing/data/dianxin6.npy
+  
+#trainer
+TRAINER:
+  KWARGS:
+    MAX_EPOCHS: 100
+    BATCH_SIZE: 4
+    NUM_WORKERS: 4
+    LR: 0.0001
+    LR_SCHEDULER: 
+      TYPE: "cosine"
+      KWARGS:
+        T_max: 100
+        eta_min: 0.00001
+    OPTIMIZER: 
+      TYPE: "adam"
+      KWARGS:
+        betas: [0.9, 0.999]
+        eps: 1e-08
+        weight_decay: 0.0001
+    LOG_INTERVAL: 10
+    VAL_INTERVAL: 1
+    SAVE_INTERVAL: 1
+    SAVE_DIR: /media/cyj/DATA/Self_Feature_LO/src/point_cloud_processing/data/ckpt
+    RESUME: False
+    RESUME_PATH: /media/cyj/DATA/Self_Feature_LO/src/point_cloud_processing/data/ckpt/epoch_0.pth
+    LOG_PATH: /media/cyj/DATA/Self_Feature_LO/src/point_cloud_processing/data/log.txt
+    USE_TENSORBOARD: True
+
+
+

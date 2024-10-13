@@ -81,15 +81,25 @@ class Li2Former(nn.Module):
             add_bf=True,
         )
 
-        # classification head
-        self.cls_head = nn.Linear(s_d_model, 1)
-        # regression head
-        self.reg_head = nn.Sequential(
-            nn.Linear(s_d_model, s_d_model * 2),
-            nn.ReLU(),
-            nn.Linear(s_d_model * 2, 2),
-            nn.ReLU(),
+        # # classification head
+        # self.cls_head = nn.Linear(s_d_model, 1)
+        # # regression head
+        # self.reg_head = nn.Sequential(
+        #     nn.Linear(s_d_model, s_d_model * 2),
+        #     nn.ReLU(),
+        #     nn.Linear(s_d_model * 2, 2),
+        #     nn.ReLU(),
+        # )
+
+        # weighted head
+        # 新增权重输出层，为每个点输出一个权重
+        self.weight_head = nn.Sequential(
+            nn.Linear(s_d_model, 128),  # 第一个全连接层，可以调整维度
+            nn.ReLU(),                  # 激活函数
+            nn.Linear(128, 1),          # 第二个全连接层，输出维度为1
+            nn.Sigmoid()                # Sigmoid激活函数，确保输出在0到1之间
         )
+
 
         self.alpha = nn.Parameter(torch.ones(2))
         self.avg_pool = nn.AdaptiveAvgPool1d(1)
@@ -212,10 +222,13 @@ class Li2Former(nn.Module):
             raise NotImplementedError
 
         # prediction head
-        pred_cls = self.cls_head(output)  # [B, C, 1]
-        pred_reg = self.reg_head(output)  # [B, C, 2]
+        # 计算每个点的权重
+        pred_weights = self.weight_head(output.view(B * C * T, -1)).view(B, C, T, P)
+        # pred_cls = self.cls_head(output)  # [B, C, 1]
+        # pred_reg = self.reg_head(output)  # [B, C, 2]
 
-        return pred_cls, pred_reg
+        # return pred_cls, pred_reg,pred_weights 
+        return pred_weights
 
     def run(self, batch: dict, **kwargs) -> Tuple[Tensor, dict, dict]:
         """
@@ -238,82 +251,84 @@ class Li2Former(nn.Module):
         tb_dict, rtn_dict = {}, {}
 
         x = batch["input"]
-        target_cls, target_reg = batch["target_cls"], batch["target_reg"]
-        B, N = target_cls.shape
+        # target_cls, target_reg = batch["target_cls"], batch["target_reg"]
+        B, N = x.shape[:2]
 
         # train only on part of scan, if the GPU cannot fit the whole scan
         if self.training and N > self.max_num_pts:
             idx0 = np.random.randint(0, N - self.max_num_pts)
             idx1 = idx0 + self.max_num_pts
-            target_cls = target_cls[:, idx0:idx1]
-            target_reg = target_reg[:, idx0:idx1, :]
+            # target_cls = target_cls[:, idx0:idx1]
+            # target_reg = target_reg[:, idx0:idx1, :]
             x = x[:, idx0:idx1, :, :]
             N = self.max_num_pts
 
         # inference
         x = torch.from_numpy(x).cuda(non_blocking=True).float()
-        pred_cls, pred_reg = self.forward(x)
+        # pred_cls, pred_reg, pred_weights = self.forward(x)
+        pred_weights = self.forward(x)
+        # target_cls = torch.from_numpy(target_cls).cuda(non_blocking=True).float()
+        # target_reg = torch.from_numpy(target_reg).cuda(non_blocking=True).float()
 
-        target_cls = torch.from_numpy(target_cls).cuda(non_blocking=True).float()
-        target_reg = torch.from_numpy(target_reg).cuda(non_blocking=True).float()
+        # outputs = {"pred_cls": pred_cls, "pred_reg": pred_reg,"pred_weights": pred_weights}
+        outputs = {"pred_weights": pred_weights}
+        return  tb_dict, rtn_dict
+        # if self.t_encoder.add_bf or self.s_encoder.add_bf:
+        #     targets = {
+        #         "target_cls": torch.cat([target_cls, target_cls], dim=0),
+        #         "target_reg": torch.cat([target_reg, target_reg], dim=0),
+        #     }
+        # else:
+        #     targets = {"target_cls": target_cls, "target_reg": target_reg}
 
-        outputs = {"pred_cls": pred_cls, "pred_reg": pred_reg}
+        # # mixup
+        # if "labels_mixup" in self.criterion.losses:
+        #     x_mixup = batch["input_mixup"]
+        #     target_cls_mixup = batch["target_cls_mixup"]
+        #     B, N = target_cls_mixup.shape
 
-        if self.t_encoder.add_bf or self.s_encoder.add_bf:
-            targets = {
-                "target_cls": torch.cat([target_cls, target_cls], dim=0),
-                "target_reg": torch.cat([target_reg, target_reg], dim=0),
-            }
-        else:
-            targets = {"target_cls": target_cls, "target_reg": target_reg}
+        #     # train only on part of scan, if the GPU cannot fit the whole scan
+        #     if self.training and N > self.max_num_pts:
+        #         idx0 = np.random.randint(0, N - self.max_num_pts)
+        #         idx1 = idx0 + self.max_num_pts
+        #         target_cls_mixup = target_cls_mixup[:, idx0:idx1]
+        #         x = x[:, idx0:idx1, :, :]
+        #         N = self.max_num_pts
 
-        # mixup
-        if "labels_mixup" in self.criterion.losses:
-            x_mixup = batch["input_mixup"]
-            target_cls_mixup = batch["target_cls_mixup"]
-            B, N = target_cls_mixup.shape
+        #     # inference
+        #     x_mixup = torch.from_numpy(x_mixup).cuda(non_blocking=True).float()
+        #     target_cls_mixup = (
+        #         torch.from_numpy(target_cls_mixup).cuda(non_blocking=True).float()
+        #     )
+        #     pred_cls_mixup, _ = self.forward(x_mixup)
+        #     outputs.update({"pred_cls_mixup": pred_cls_mixup})
 
-            # train only on part of scan, if the GPU cannot fit the whole scan
-            if self.training and N > self.max_num_pts:
-                idx0 = np.random.randint(0, N - self.max_num_pts)
-                idx1 = idx0 + self.max_num_pts
-                target_cls_mixup = target_cls_mixup[:, idx0:idx1]
-                x = x[:, idx0:idx1, :, :]
-                N = self.max_num_pts
+        #     if self.t_encoder.add_bf or self.s_encoder.add_bf:
+        #         targets.update(
+        #             {
+        #                 "target_cls_mixup": torch.cat(
+        #                     [target_cls_mixup, target_cls_mixup], dim=0
+        #                 )
+        #             }
+        #         )
+        #     else:
+        #         targets.update({"target_cls_mixup": target_cls_mixup})
 
-            # inference
-            x_mixup = torch.from_numpy(x_mixup).cuda(non_blocking=True).float()
-            target_cls_mixup = (
-                torch.from_numpy(target_cls_mixup).cuda(non_blocking=True).float()
-            )
-            pred_cls_mixup, _ = self.forward(x_mixup)
-            outputs.update({"pred_cls_mixup": pred_cls_mixup})
+        # # loss calculation
+        # losses = self.criterion(outputs, targets, **kwargs)
+        # for loss_type, loss_val in losses.items():
+        #     tb_dict[loss_type] = (
+        #         loss_val if isinstance(loss_val, float) else loss_val.item()
+        #     )
 
-            if self.t_encoder.add_bf or self.s_encoder.add_bf:
-                targets.update(
-                    {
-                        "target_cls_mixup": torch.cat(
-                            [target_cls_mixup, target_cls_mixup], dim=0
-                        )
-                    }
-                )
-            else:
-                targets.update({"target_cls_mixup": target_cls_mixup})
+        # # losses sum-up
+        # losses = sum(
+        #     [
+        #         losses[i] * self.criterion.loss_weight[i]
+        #         for i in losses.keys()
+        #         if i in self.criterion.loss_weight
+        #     ]
+        # )
+        
+        # return losses, tb_dict, rtn_dict
 
-        # loss calculation
-        losses = self.criterion(outputs, targets, **kwargs)
-        for loss_type, loss_val in losses.items():
-            tb_dict[loss_type] = (
-                loss_val if isinstance(loss_val, float) else loss_val.item()
-            )
-
-        # losses sum-up
-        losses = sum(
-            [
-                losses[i] * self.criterion.loss_weight[i]
-                for i in losses.keys()
-                if i in self.criterion.loss_weight
-            ]
-        )
-
-        return losses, tb_dict, rtn_dict

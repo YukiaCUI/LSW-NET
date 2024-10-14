@@ -43,8 +43,8 @@ def train(config_path):
             print("attn.shape: ", attn.shape)
             
             # TODO: 定义损失函数MocoLoss
-            # loss = attnLoss(attn, X)
-            # loss.backward()
+            loss = attnLoss(attn, x)
+            loss.backward()
             optimizer.step()  
 
             # # 记录损失到 TensorBoard

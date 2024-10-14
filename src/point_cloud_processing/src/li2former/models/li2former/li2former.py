@@ -93,13 +93,6 @@ class Li2Former(nn.Module):
 
         # weighted head
         # 新增权重输出层，为每个点输出一个权重
-        self.weight_head = nn.Sequential(
-            nn.Linear(s_d_model, 128),  # 第一个全连接层，可以调整维度
-            nn.ReLU(),                  # 激活函数
-            nn.Linear(128, 1),          # 第二个全连接层，输出维度为1
-            nn.Sigmoid()                # Sigmoid激活函数，确保输出在0到1之间
-        )
-
 
         self.alpha = nn.Parameter(torch.ones(2))
         self.avg_pool = nn.AdaptiveAvgPool1d(1)
@@ -220,17 +213,28 @@ class Li2Former(nn.Module):
 
         else:
             raise NotImplementedError
+        
+        # output.shape = (B*2, C, 512)
 
         # prediction head
         # 计算每个点的权重
-        pred_weights = self.weight_head(output.view(B * C * T, -1)).view(B, C, T, P)
+        output_point = output.view(C, -1)
+        C, N = output_point.shape
+        self.weight_head = nn.Sequential(
+            nn.Linear(N, 128),  # 第一个全连接层，可以调整维度
+            nn.ReLU(),                  # 激活函数
+            nn.Linear(128, 1),          # 第二个全连接层，输出维度为1
+            nn.Sigmoid()                # Sigmoid激活函数，确保输出在0到1之间
+        )
+        self.weight_head = self.weight_head.to(output_point.device)
+        pred_weights = self.weight_head(output_point)
         # pred_cls = self.cls_head(output)  # [B, C, 1]
         # pred_reg = self.reg_head(output)  # [B, C, 2]
 
         # return pred_cls, pred_reg,pred_weights 
         return pred_weights
 
-    def run(self, batch: dict, **kwargs) -> Tuple[Tensor, dict, dict]:
+    def run(self, x: Tensor, **kwargs) -> Tensor:
         """
         Run the inference.
 
@@ -248,9 +252,9 @@ class Li2Former(nn.Module):
         rtn_dict: dict
             information to return
         """
-        tb_dict, rtn_dict = {}, {}
+        # tb_dict, rtn_dict = {}, {}
 
-        x = batch["input"]
+        # x = batch["input"]
         # target_cls, target_reg = batch["target_cls"], batch["target_reg"]
         B, N = x.shape[:2]
 
@@ -264,7 +268,7 @@ class Li2Former(nn.Module):
             N = self.max_num_pts
 
         # inference
-        x = torch.from_numpy(x).cuda(non_blocking=True).float()
+        # x = torch.from_numpy(x).cuda(non_blocking=True).float()
         # pred_cls, pred_reg, pred_weights = self.forward(x)
         pred_weights = self.forward(x)
         # target_cls = torch.from_numpy(target_cls).cuda(non_blocking=True).float()
@@ -272,7 +276,7 @@ class Li2Former(nn.Module):
 
         # outputs = {"pred_cls": pred_cls, "pred_reg": pred_reg,"pred_weights": pred_weights}
         outputs = {"pred_weights": pred_weights}
-        return  tb_dict, rtn_dict
+        return  pred_weights    
         # if self.t_encoder.add_bf or self.s_encoder.add_bf:
         #     targets = {
         #         "target_cls": torch.cat([target_cls, target_cls], dim=0),

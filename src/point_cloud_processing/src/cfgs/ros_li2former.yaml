@@ -42,13 +42,13 @@ CUTOUT_KWARGS:
 PIPELINE:
   SEED: 3407
 
-  LOSS:
-    KWARGS:
-      TYPE: ["labels", "reg"]
-      LOSS_WEIGHT: {"loss_labels": 1.0, "loss_reg": 3.0, "loss_giou": 2.0}
-      EOS_WEIGHT: 0.1
-      COST_WEIGHT: {"cost_labels": 1.0, "cost_boxes": 5.0, "cost_giou": 2.0}
-      DYNAMIC_REG: {"a": 1.5, "r": 0.35, "delta": 0.333333, "alpha": 1.5}
+LOSS: 
+  KWARGS:
+    TYPE: ["labels", "reg"]
+    LOSS_WEIGHT: {"loss_labels": 1.0, "loss_reg": 3.0, "loss_giou": 2.0}
+    EOS_WEIGHT: 0.1
+    COST_WEIGHT: {"cost_labels": 1.0, "cost_boxes": 5.0, "cost_giou": 2.0}
+    DYNAMIC_REG: {"a": 1.5, "r": 0.35, "delta": 0.333333, "alpha": 1.5}
 
   
 
@@ -59,7 +59,7 @@ FILE_PATH:
 TRAINER:
   KWARGS:
     MAX_EPOCHS: 100
-    BATCH_SIZE: 4
+    BATCH_SIZE: 1
     NUM_WORKERS: 4
     LR: 0.0001
     LR_SCHEDULER: 
@@ -81,6 +81,3 @@ TRAINER:
     RESUME_PATH: /media/cyj/DATA/Self_Feature_LO/src/point_cloud_processing/data/ckpt/epoch_0.pth
     LOG_PATH: /media/cyj/DATA/Self_Feature_LO/src/point_cloud_processing/data/log.txt
     USE_TENSORBOARD: True
-
-
-

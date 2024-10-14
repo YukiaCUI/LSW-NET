@@ -11,7 +11,7 @@ import os
 from torch.utils.data import DataLoader, TensorDataset
 
 # 自定义点云数据集
-class Dataloader(object):
+class DataGet(object):
     def __init__(self, config):        
 
   
@@ -45,6 +45,8 @@ class Dataloader(object):
         
         # 创建一个 TensorDataset
         cutouts = torch.stack(cutouts, dim=0) 
+        
+        print("cutous: ", cutouts.shape)
         dataset = TensorDataset(cutouts)
 
         # print(config)
@@ -55,5 +57,6 @@ class Dataloader(object):
         batch_size = trainer_config("KWARGS", {}).get("BATCH_SIZE") 
 
         dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+        # print("dataloader: ", dataloader.shape)
         return dataloader
-
+ 

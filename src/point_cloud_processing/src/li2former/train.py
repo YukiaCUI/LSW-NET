@@ -1,11 +1,12 @@
 import numpy as np
 from detector import Detector
 from config.config import Config
-from data_loader import DataLoader 
-from .models.li2former import Li2Former
+from data_loader import DataGet 
+from models.li2former import Li2Former
 import torch.optim as optim
 import torch
 from torch.utils.tensorboard import SummaryWriter
+from tqdm import tqdm
 
 def train(config_path):
     # 创建 Config 类的实例
@@ -20,28 +21,35 @@ def train(config_path):
     checkpoints = []
     
     # 初始化 DataScan 类
-    BatchLoader = DataLoader(config_path)  
-    X = BatchLoader.get_batch()
+    BatchLoader = DataGet(config)  
+    dataloader = BatchLoader.get_batch()
     model_kwargs = config.sub("MODEL")("KWARGS")
     loss_kwargs  = config.sub("LOSS")("KWARGS")
     train_kwargs = config.sub("TRAINER")("KWARGS")
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = Li2Former(loss_kwargs, model_kwargs).to(device) 
 
-    # TODO:修改网络输入输出
-    model = Li2Former(loss_kwargs, model_kwargs) 
     optimizer = optim.Adam(model.parameters(), lr=0.001)
-    num_epochs = train_kwargs("MAX_EPOCHS")
-    for epoch in range(num_epochs):
-        optimizer.zero_grad()  # 清空梯度
-        attn = model.run(X)    
-        
-        # TODO: 定义损失函数MocoLoss
-        loss = attnLoss(attn, X)
-        loss.backward()
-        optimizer.step()  
+    num_epochs = train_kwargs["MAX_EPOCHS"]
+    for epoch in tqdm(range(num_epochs), desc="Training Epochs"):
+        for batch in dataloader:
+            x = batch[0].to(device)
 
-        # 记录损失到 TensorBoard
-        writer.add_scalar('Loss/train', loss.item(), epoch)
-        log.append({"loss": loss.item()})
+            optimizer.zero_grad()  # 清空梯度
+            attn = model.run(x)    
+            
+            print("x.shape: ", x.shape)
+            print("attn.shape: ", attn.shape)
+            
+            # TODO: 定义损失函数MocoLoss
+            # loss = attnLoss(attn, X)
+            # loss.backward()
+            optimizer.step()  
+
+            # # 记录损失到 TensorBoard
+            # writer.add_scalar('Loss/train', loss.item(), epoch)
+            # log.append({"loss": loss.item()})
 
     # 保存当前检查点
     checkpoint = {

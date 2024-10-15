@@ -6,3 +6,5 @@ src/point_cloud_processing/data
 third_party/
 data/
 logs/
+*.pth
+*.pyc

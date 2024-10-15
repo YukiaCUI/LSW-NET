@@ -38,25 +38,50 @@ def train(config_path):
 
             optimizer.zero_grad()  # 清空梯度
             attn = model.run(x)    
+            attn_cutouts = BatchLoader.get_attn_cutouts(attn)
+            # print("x0.shape: ", x.shape)
+            # print("attn0.shape: ", attn.shape)
+            print("attn_cutouts0.shape: ", attn_cutouts.shape)
             
-            print("x.shape: ", x.shape)
-            print("attn.shape: ", attn.shape)
+            # x.shape = (B, C=1800, T=5, P)
+            # attn,shape = (B, 1, C=1800)
+            # attn_cutouts.shape = (B, C=1800, 1, P)
+    
             
+
+            # reshape to satisfy the input of the loss functione
+            B, C, T, P = x.shape
+            x = x[:, :, 0, :].unsqueeze(2)
+            x = x.permute(0,2,1,3)
+            x = x.repeat(1, 3, 1, 1)
+            B, chanel, Ct, P = x.shape
+            x = x.reshape(B, chanel, Ct/2, P*2)
+
+            attn_cutouts = attn_cutouts.permute(0, 2, 1, 3)
+            attn_cutouts = attn_cutouts.repeat(1, 3, 1, 1)
+            B, chanel, Ct, P = attn_cutouts.shape
+            attn_cutouts = attn_cutouts.reshape(B, chanel, Ct/2, P*2)
+
+            masks = torch.randperm(Ct)[:224]
+            x = x[:, :, masks, :]
+            attn_cutouts = attn_cutouts[:, :, masks, :]
+
+
             # TODO: 定义损失函数MocoLoss
-            loss = attnLoss(attn, x)
+            loss = attnLoss(x, attn_cutouts)
             loss.backward()
             optimizer.step()  
 
             # # 记录损失到 TensorBoard
-            # writer.add_scalar('Loss/train', loss.item(), epoch)
-            # log.append({"loss": loss.item()})
+            writer.add_scalar('Loss/train', loss.item(), epoch)
+            log.append({"loss": loss.item()})
 
     # 保存当前检查点
     checkpoint = {
         'epoch': epoch,
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
-        'loss': loss.item(),
+        # 'loss': loss.item(), 
     }
     
     # 添加检查点并根据损失进行排序
@@ -73,10 +98,6 @@ def train(config_path):
     # 关闭 TensorBoard 的日志记录器
     writer.close()
         
-       
- 
-
-
 
 if __name__ == "__main__":
     config_path = "/media/cyj/DATA/Self_Feature_LO/src/point_cloud_processing/src/cfgs/ros_li2former.yaml"

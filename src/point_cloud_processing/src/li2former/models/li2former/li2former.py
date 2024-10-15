@@ -218,8 +218,9 @@ class Li2Former(nn.Module):
 
         # prediction head
         # 计算每个点的权重
-        output_point = output.view(C, -1)
-        C, N = output_point.shape
+        # print("output.shape: ", output.shape)
+        output_point = output.view(B, C, -1)
+        B, C, N = output_point.shape
         self.weight_head = nn.Sequential(
             nn.Linear(N, 128),  # 第一个全连接层，可以调整维度
             nn.ReLU(),                  # 激活函数

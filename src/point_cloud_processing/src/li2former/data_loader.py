@@ -27,24 +27,33 @@ class DataGet(object):
         data_path = self.config("FILE_PATH")
         # 遍历 N 维度，对每个点应用 scans2cutout 函数
         cutouts = []
+        cutouts_numpy = []
         point_cloud_data = np.load(data_path) 
         
         #TODO: 仅使用前 100 个点
-        point_cloud_data = point_cloud_data[:100]
+        # point_cloud_data = point_cloud_data[:101]
+        point_cloud_data = point_cloud_data[:14045]
         
         for i in tqdm(range(point_cloud_data.shape[0]), desc="Processing scans"):
             scan = point_cloud_data[i, :]
-            # print("scan.shape: ", scan.shape)
-            cutout = cutouter(scan)
-            # print("cutout.shape: ", cutout.shape)
+            cutout = cutouter(scan) # numpy
+            ct = torch.from_numpy(cutout).float()
+            
+            
             if i >= 5:
                 # 假设你已经有了 data，形状为 [1800, 5, 64]
-                cutouts.append(cutout)
+                cutouts.append(ct)
+                cutouts_numpy.append(cutout)
                 
             # print(cutout.shape)
             
             # 从 i = 5 开始进行 append 操作
         
+        # save cutouts_numpy as npy file
+        cutouts_numpy = np.array(cutouts_numpy)
+        
+        np.save('/media/cyj/DATA/Self_Feature_LO/cutouts.npy', cutouts_numpy)
+
         # 创建一个 TensorDataset
         cutouts = torch.stack(cutouts, dim=0) 
         

@@ -101,8 +101,8 @@ class MoCo_AttnLoss(nn.Module):
         """
         pass
         # 创建两种不同的数据增强实例
-        augmentation1 = PointCloudAugmentation(blur_probability=1.0, flip_probability=0.5)  # 高斯模糊100%，翻转50%
-        augmentation2 = PointCloudAugmentation(blur_probability=0.1, flip_probability=0.5)  # 高斯模糊10%，翻转50%
+        augmentation1 = PointCloudAugmentation(blur_probability=1.0, flip_probability=0)  # 高斯模糊100%，翻转50%
+        augmentation2 = PointCloudAugmentation(blur_probability=0.1, flip_probability=0)  # 高斯模糊10%，翻转50%
 
         # 进行数据增强
         augmented_x1 = torch.zeros_like(x)  # 创建一个相同形状的张量用于存储增强后的数据
@@ -116,8 +116,8 @@ class MoCo_AttnLoss(nn.Module):
         for i in range(x.shape[0]):
             augmented_x2[i] = augmentation2(x[i])  # 应用增强2
 
-        print("Augmented Data from Augmentation 1 Shape:", augmented_x1.shape)  # 输出增强后的数据形状
-        print("Augmented Data from Augmentation 2 Shape:", augmented_x2.shape)  # 输出增强后的数据形状
+        # print("Augmented Data from Augmentation 1 Shape:", augmented_x1.shape)  # 输出增强后的数据形状
+        # print("Augmented Data from Augmentation 2 Shape:", augmented_x2.shape)  # 输出增强后的数据形状
 
         return augmented_x1, augmented_x2
        
@@ -165,11 +165,13 @@ class MoCo_AttnLoss(nn.Module):
     #     labels = (torch.arange(N, dtype=torch.long) + N * torch.distributed.get_rank()).cuda()
     #     return nn.CrossEntropyLoss()(logits, labels) * (2 * self.T)
 
-    def contrastive_loss(self, q, k):
+    def contrastive_loss(self, q, k, w):
         # normalize
         q = nn.functional.normalize(q, dim=1)  # N*2
         k = nn.functional.normalize(k, dim=1)
         
+        q = q * w
+
         # 计算 logits
         logits = torch.mm(q, k.t()) / self.T  # 使用矩阵乘法替代 einsum
         N = logits.shape[0]  # batch size
@@ -189,14 +191,26 @@ class MoCo_AttnLoss(nn.Module):
             loss
         """
         x1, x2 = self.add_noise(x)
-        print("x1.shape: ", x1.shape)
-        print("x2.shape: ", x2.shape)
+        # print("x1.shape: ", x1.shape)
+        # print("x2.shape: ", x2.shape)
+
+        # print("x1.device: ", x1.device)
+        # print("x2.device: ", x2.device)
+
+        # print("weights.device: ", weights.device)
+        
+
+        # x1(2,3,224,224)
+        # x2(2,3,224,224)
+
         # compute features
         q1 = self.predictor(self.base_encoder(x1))
         q2 = self.predictor(self.base_encoder(x2))
         
-        print("q1.shape: ", q1.shape)
-        print("q2.shape: ", q2.shape)
+        # print("q1.shape: ", q1.shape)
+        # print("q2.shape: ", q2.shape)
+        # q1(2,256)
+        # q2(2,256)
 
         with torch.no_grad():  # no gradient
             self._update_momentum_encoder(m)  # update the momentum encoder
@@ -204,32 +218,38 @@ class MoCo_AttnLoss(nn.Module):
             # compute momentum features as targets
             k1 = self.momentum_encoder(x1)
             k2 = self.momentum_encoder(x2)
+        
+        w  = self.momentum_encoder(weights)    
 
-        print("k1.shape: ", k1.shape)
-        print("k2.shape: ", k2.shape)
+        # print("k1.shape: ", k1.shape)
+        # print("k2.shape: ", k2.shape)
+        # k1(2,256)
+        # k2(2,256)
 
         # the default value is 1, however, we find all choice achieves similar results.
-        if self.add_bf in [1, 34, 36]:
-            N = len(q1) // 2
-            # self.contrastive_loss(q1, k2) + self.contrastive_loss(q2, k1) 
-            # this term is following the original setting: 
-            # self.contrastive_loss(q1[:N], k2[:N]) + self.contrastive_loss(q2[:N], k1[:N]) # original moco loss
-            # The other term is related to features with batchformer. 
-            # Here, I just implement a very naive version for batchformer on Moco-V3 and report it in the paper.
-            # To some extent, both batchformer and image contrastive learning investigates the sample relationships.
-            # I am not familiar with contrastive learning. I guess there might be a better implementation for batchformer on moco
-            loss = self.contrastive_loss(q1[:N], k2[:N]) + self.contrastive_loss(q1[:N], k2[N:]) + self.contrastive_loss(q1[N:], k2[:N]) + self.contrastive_loss(q1[N:], k2[N:]) + \
-                   self.contrastive_loss(q2[:N], k1[:N]) + self.contrastive_loss(q2[:N], k1[N:]) + self.contrastive_loss(q2[N:], k1[:N]) + self.contrastive_loss(q2[N:], k1[N:])
-            # emperically, all those strategies are valid and the model achieves slightly better performance when add_bf is 1.
-            if self.add_bf in [1, 34]:
-                return loss
-            elif self.add_bf == 37:
-                loss += (self.contrastive_loss(q1[:N], q1[N:].detach()) + self.contrastive_loss(q2[:N], q2[N:].detach()))
-                return loss / 5.
-            else:
-                return loss / 4 # considering the number of losses increases
-        else:
-            return self.contrastive_loss(q1, k2) + self.contrastive_loss(q2, k1)
+        # if self.add_bf in [1, 34, 36]:
+        #     N = len(q1)
+        #     # self.contrastive_loss(q1, k2) + self.contrastive_loss(q2, k1) 
+        #     # this term is following the original setting: 
+        #     # self.contrastive_loss(q1[:N], k2[:N]) + self.contrastive_loss(q2[:N], k1[:N]) # original moco loss
+        #     # The other term is related to features with batchformer. 
+        #     # Here, I just implement a very naive version for batchformer on Moco-V3 and report it in the paper.
+        #     # To some extent, both batchformer and image contrastive learning investigates the sample relationships.
+        #     # I am not familiar with contrastive learning. I guess there might be a better implementation for batchformer on moco
+        #     # loss = self.contrastive_loss(q1[:N], k2[:N])*w[:N] + self.contrastive_loss(q1[:N], k2[N:])*w[N:] + self.contrastive_loss(q1[N:], k2[:N])*w[:N] + self.contrastive_loss(q1[N:], k2[N:]) + \
+        #     #        self.contrastive_loss(q2[:N], k1[:N])*w[:N] + self.contrastive_loss(q2[:N], k1[N:])*w[N:] + self.contrastive_loss(q2[N:], k1[:N])*w[:N] + self.contrastive_loss(q2[N:], k1[N:])
+        #     loss = self.contrastive_loss(q1, k2, w) + self.contrastive_loss(q2, k1, w)
+        #     # emperically, all those strategies are valid and the model achieves slightly better performance when add_bf is 1.
+        #     if self.add_bf in [1, 34]:
+        #         return loss
+        #     elif self.add_bf == 37:
+        #         loss += (self.contrastive_loss(q1[:N], q1[N:].detach()) + self.contrastive_loss(q2[:N], q2[N:].detach()))
+        #         return loss / 5.
+        #     else:
+        #         return loss / 4 # considering the number of losses increases
+        # else:
+        
+        return self.contrastive_loss(q1, k2, w) + self.contrastive_loss(q2, k1, w)
 
 
 class MoCo_ResNet(MoCo_AttnLoss):

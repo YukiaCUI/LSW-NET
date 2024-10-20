@@ -67,7 +67,7 @@ class ScanData(object):
         self.mask[self.X == self.inf] = 0
         X = self.X.copy()
         X[:, :-1] = X[:, :-1] - X[:, 1:]                                                    # 特征工程
-        X[:, -1] = X[:, -2]
+        X[:, -1] = X[:, -2] 
         X[:, :-1] = X[:, :-1] - X[:, 1:]
         X[:, -1] = X[:, -2]
         # X = (X - X.mean()) / X.std()                                                        # 标准化

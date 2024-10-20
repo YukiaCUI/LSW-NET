@@ -34,7 +34,7 @@ class DataScan:
         )
         self.history.append(cutout)
         ct = np.concatenate(self.history, axis=1)
-        ct = torch.from_numpy(ct).float()
+        # ct = torch.from_numpy(ct).float()
         return ct 
 
 class attnScan:

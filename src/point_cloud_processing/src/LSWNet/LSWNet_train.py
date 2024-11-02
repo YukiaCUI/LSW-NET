@@ -17,6 +17,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import Dataset, DataLoader
 
 from attnloss import AttnLoss
+from contrastloss import ContrastLoss
 from LSWEncoderOnly import EncoderOnly
 from LSWNet import LSWNet
 
@@ -63,7 +64,7 @@ def train(data_path, batch_size):
     
     # 实例化并加载保存的编码器权重
     encoder_only_model = EncoderOnly(hidden_size=hidden_size, kernel_size=kernel_size)
-    encoder_params_path = "/share/home/tj90055/dhj/Self_Feature_LO/src/point_cloud_processing/model/LSencoder/encoder_params.pth"
+    encoder_params_path = "/share/home/tj90055/dhj/Self_Feature_LO/src/point_cloud_processing/model/LSencoder/encoder_params001.pth"
     encoder_state_dict = torch.load(encoder_params_path, map_location=device)
 
     # 加载参数到模型
@@ -81,7 +82,8 @@ def train(data_path, batch_size):
     model = model.to(device)
     
     # 定义损失函数和优化器
-    attnloss = AttnLoss()
+    # attnloss = AttnLoss()
+    contrastloss = ContrastLoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     # 创建 TensorBoard 日志文件夹
@@ -113,13 +115,21 @@ def train(data_path, batch_size):
             x_encoder = encoder_output.view(B, N//8, T, -1).permute(0, 2, 1, 3).contiguous()
 
             # 前向传播
-            weights = model(x_encoder)
+            feature_1 = model(x_encoder)
+            feature_2 = model(x_encoder)
+
+            print("~~~~~~~~~~~~~~~~~~")
+            print("feature_1: ",feature_1.size())
             
             # 计算损失：输入和输出的差异
             # inputs(B, T, N, 1) weight(B, N, 1)
-            points = inputs[:, 2, :, :].squeeze()
-            weights = weights.squeeze()
-            loss = attnloss(points, weights)
+            # points = inputs[:, 2, :, :].squeeze()
+            # weights = weights.squeeze()
+            # loss = attnloss(points, weights)
+
+            # 计算损失：对比损失（方法2）
+            # feature_size(B, N, C)
+            loss = contrastloss(feature_1, feature_2)
             
             # 反向传播和优化
             optimizer.zero_grad()
@@ -127,11 +137,15 @@ def train(data_path, batch_size):
             optimizer.step()  
             running_loss += loss.item()
             # 记录每个步骤的损失到 TensorBoard
-            writer.add_scalar('Loss/train', attnloss.loss.item(), epoch * len(dataloader) + step)
-            writer.add_scalar('loss_pos/train', attnloss.loss_pos.item(), epoch * len(dataloader) + step)
-            writer.add_scalar('loss_neg1/train', attnloss.loss_neg1.item(), epoch * len(dataloader) + step)
-            writer.add_scalar('loss_reglex/train', attnloss.loss_reglex.item(), epoch * len(dataloader) + step)
-            writer.add_scalar('loss_tem/train', attnloss.loss_tem.item(), epoch * len(dataloader) + step)
+            # writer.add_scalar('Loss/train', attnloss.loss.item(), epoch * len(dataloader) + step)
+            # writer.add_scalar('loss_pos/train', attnloss.loss_pos.item(), epoch * len(dataloader) + step)
+            # writer.add_scalar('loss_neg1/train', attnloss.loss_neg1.item(), epoch * len(dataloader) + step)
+            # writer.add_scalar('loss_reglex/train', attnloss.loss_reglex.item(), epoch * len(dataloader) + step)
+            # writer.add_scalar('loss_tem/train', attnloss.loss_tem.item(), epoch * len(dataloader) + step)
+
+            writer.add_scalar('Loss/train', contrastloss.loss.item(), epoch * len(dataloader) + step)
+            writer.add_scalar('desc_loss/train', contrastloss.desc_loss.item(), epoch * len(dataloader) + step)
+            writer.add_scalar('det_loss/train', contrastloss.det_loss.item(), epoch * len(dataloader) + step)
 
         avg_loss = running_loss / len(dataloader)
         print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {avg_loss:.4f}")

@@ -14,7 +14,7 @@ import torch.utils.data
 import torch.utils.data.distributed
 import torchvision.models as torchvision_models
 from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, ConcatDataset
 
 from attnloss import AttnLoss
 from contrastloss import ContrastLoss
@@ -44,27 +44,34 @@ def train(data_path, batch_size):
     hidden_size = 128
     kernel_size = 7
     learning_rate = 0.001
-    num_epochs = 200
-    
-    # 加载数据
-    point_cloud_data = np.load(data_path) 
-    n, N = point_cloud_data.shape
+    num_epochs = 10    
 
-    # 定义 T 的长度
-    T = 5
-    assert T % 2 == 1, "T 必须是奇数，以便能对称地选择前后帧"
-    padding = T // 2  # 对称 padding，用于从每帧提取前后相邻帧
-    valid_frames = n - 2 * padding  # 可用帧数量
+    # 构建数据集
+    T = 5  # 每帧取 T 个帧打包
 
-    # 创建 Dataset 实例
-    dataset = PointCloudSequenceDataset(point_cloud_data, T=T)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    # 加载每个数据集并构建 PointCloudSequenceDataset
+    datasets = []
+    for path in data_paths:
+        # 加载点云数据 (n, N)
+        point_cloud_data = np.load(path)
+        column_to_add = np.full((point_cloud_data.shape[0], 1), 35.0)
+        point_cloud_data = np.hstack((point_cloud_data, column_to_add))
+        point_cloud_data[point_cloud_data > 35] = 35.0
+        dataset = PointCloudSequenceDataset(point_cloud_data, T)
+        datasets.append(dataset)
+
+    # 合并多个数据集
+    combined_dataset = ConcatDataset(datasets)
+
+    # 创建 DataLoader 进行随机采样
+    dataloader = DataLoader(combined_dataset, batch_size=batch_size, shuffle=True)
+
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     # 实例化并加载保存的编码器权重
     encoder_only_model = EncoderOnly(hidden_size=hidden_size, kernel_size=kernel_size)
-    encoder_params_path = "/share/home/tj90055/dhj/Self_Feature_LO/src/point_cloud_processing/model/LSencoder/encoder_params001.pth"
+    encoder_params_path = "/share/home/tj90055/dhj/Self_Feature_LO/src/point_cloud_processing/model/LSencoder/encoder_params003.pth"
     encoder_state_dict = torch.load(encoder_params_path, map_location=device)
 
     # 加载参数到模型
@@ -82,8 +89,8 @@ def train(data_path, batch_size):
     model = model.to(device)
     
     # 定义损失函数和优化器
-    # attnloss = AttnLoss()
-    contrastloss = ContrastLoss()
+    attnloss = AttnLoss()
+    # contrastloss = ContrastLoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     # 创建 TensorBoard 日志文件夹
@@ -113,39 +120,32 @@ def train(data_path, batch_size):
             
             # 调整形状 (B * N // 8, T, -1)-->(B, T, N//8, -1)
             x_encoder = encoder_output.view(B, N//8, T, -1).permute(0, 2, 1, 3).contiguous()
-
-            # 前向传播
-            feature_1 = model(x_encoder)
-            feature_2 = model(x_encoder)
-
-            print("~~~~~~~~~~~~~~~~~~")
-            print("feature_1: ",feature_1.size())
-            
+            weights = model(x_encoder)
+            # feature_2 = model(x_encoder)
             # 计算损失：输入和输出的差异
             # inputs(B, T, N, 1) weight(B, N, 1)
-            # points = inputs[:, 2, :, :].squeeze()
-            # weights = weights.squeeze()
-            # loss = attnloss(points, weights)
+            points = inputs[:, 2, :, :].squeeze()
+            weights = weights.squeeze()
+            # print(points.shape)
+            # print(weights.shape)
+            loss = attnloss(points, weights)
 
-            # 计算损失：对比损失（方法2）
-            # feature_size(B, N, C)
-            loss = contrastloss(feature_1, feature_2)
-            
             # 反向传播和优化
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()  
             running_loss += loss.item()
             # 记录每个步骤的损失到 TensorBoard
-            # writer.add_scalar('Loss/train', attnloss.loss.item(), epoch * len(dataloader) + step)
-            # writer.add_scalar('loss_pos/train', attnloss.loss_pos.item(), epoch * len(dataloader) + step)
-            # writer.add_scalar('loss_neg1/train', attnloss.loss_neg1.item(), epoch * len(dataloader) + step)
-            # writer.add_scalar('loss_reglex/train', attnloss.loss_reglex.item(), epoch * len(dataloader) + step)
-            # writer.add_scalar('loss_tem/train', attnloss.loss_tem.item(), epoch * len(dataloader) + step)
+            writer.add_scalar('Loss/train', attnloss.loss.item(), epoch * len(dataloader) + step)
+            # writer.add_scalar('loss_con/train', attnloss.loss_con.item(), epoch * len(dataloader) + step)
+            writer.add_scalar('loss_pos/train', attnloss.loss_pos.item(), epoch * len(dataloader) + step)
+            writer.add_scalar('loss_neg1/train', attnloss.loss_neg1.item(), epoch * len(dataloader) + step)
+            writer.add_scalar('loss_reglex/train', attnloss.loss_reglex.item(), epoch * len(dataloader) + step)
+            writer.add_scalar('loss_tem/train', attnloss.loss_tem.item(), epoch * len(dataloader) + step)
 
-            writer.add_scalar('Loss/train', contrastloss.loss.item(), epoch * len(dataloader) + step)
-            writer.add_scalar('desc_loss/train', contrastloss.desc_loss.item(), epoch * len(dataloader) + step)
-            writer.add_scalar('det_loss/train', contrastloss.det_loss.item(), epoch * len(dataloader) + step)
+            # writer.add_scalar('Loss/train', contrastloss.loss.item(), epoch * len(dataloader) + step)
+            # writer.add_scalar('desc_loss/train', contrastloss.desc_loss.item(), epoch * len(dataloader) + step)
+            # writer.add_scalar('det_loss/train', contrastloss.det_loss.item(), epoch * len(dataloader) + step)
 
         avg_loss = running_loss / len(dataloader)
         print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {avg_loss:.4f}")
@@ -167,7 +167,16 @@ def train(data_path, batch_size):
     # 关闭 TensorBoard writer
     writer.close()
         
+
+
 if __name__ == "__main__":
-    data_path = "/share/home/tj90055/dhj/Self_Feature_LO/dianxin6.npy"
+    data_paths = [
+        "/share/home/tj90055/dhj/Self_Feature_LO/dianxin1.npy",
+        "/share/home/tj90055/dhj/Self_Feature_LO/dianxin6.npy",
+        "/share/home/tj90055/dhj/Self_Feature_LO/dianxinb1.npy"
+    ]
     batch_size = 64
-    train(data_path, batch_size)
+    train(data_paths, batch_size)
+
+
+

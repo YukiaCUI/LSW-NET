@@ -1,6 +1,6 @@
 # coding=utf-8 
 import sys
-sys.path.append("/share/home/tj90055/dhj/Self_Feature_LO/src/point_cloud_processing/src")
+sys.path.append("/media/cyj/DATA/Self_Feature_LO/src/point_cloud_processing/src")
 from data import ScanData
 from loss import AttnLoss
 from config import *

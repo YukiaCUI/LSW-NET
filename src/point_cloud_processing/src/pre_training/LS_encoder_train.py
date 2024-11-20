@@ -14,7 +14,7 @@ import torch.utils.data
 import torch.utils.data.distributed
 import torchvision.models as torchvision_models
 from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, ConcatDataset
 
 
 class LSEncoder(nn.Module):
@@ -93,12 +93,16 @@ class LSEncoder(nn.Module):
             num_layers=1
         )
     
+        
     def forward(self, x):
         # Input (B, T, N, 1)
         B, T, N, _ = x.size()
-
+        mask = torch.rand(B, T, N, 1) < 0.3  # 创建掩码，30% 的数据被选中
+        mask = mask.to(x.device)
+        x = x * mask.float()  # 应用掩码，设置为0
         # Encoder
         x = x.view(B * T, 1, N)  # Reshape for Conv1d
+        
         x1 = self.conv_encoder1(x)
         x1 = x1.transpose(1, 2)
         x1 = self.t_encoder1(x1)
@@ -121,7 +125,10 @@ class LSEncoder(nn.Module):
         # Decoder
         x = self.T_decoder(x_encoder, x_encoder)
         x = x.view(B, N // 8, T, -1).permute(0, 2, 1, 3).contiguous().view(B * T, -1, x.size(-1))
-
+        
+        x3 = x3.transpose(1, 2)
+        x = x + x3  # Skip connection from encoder3
+        x = x.transpose(1, 2)
         x = self.t_decoder3(x, x)
         x = x.transpose(1, 2)
         x = self.conv_decoder3(x)
@@ -141,86 +148,105 @@ class LSEncoder(nn.Module):
         x = x.view(B, T, N, 1)  # Reshape back to (B, T, N, 1)
 
         return x
-        
 
 
 class PointCloudSequenceDataset(Dataset):
     def __init__(self, data, T):
         self.data = data
         self.T = T
-        self.padding = T // 2
+        self.padding = T // 2  # 前后各取的帧数，T 必须为奇数
 
     def __len__(self):
-        # 总长度为可以提取的序列数
-        return len(self.data) - 2 * self.padding
+        # 数据长度保持与原始数据一致
+        return len(self.data)
 
     def __getitem__(self, idx):
-        # 计算索引范围，中心帧前后各 padding 帧
-        start = idx
-        end = idx + self.T
-        # 从原始数据中提取形状为 (T, N) 的子序列
+        if idx < self.padding:
+            # 如果索引在前两帧范围
+            start = 0
+            end = self.T
+        elif idx >= len(self.data) - self.padding:
+            # 如果索引在最后两帧范围
+            start = len(self.data) - self.T
+            end = len(self.data)
+        else:
+            # 一般情况，中间帧处理
+            start = idx - self.padding
+            end = idx + self.padding + 1
+
+        # 提取子序列
         sequence = self.data[start:end]
         return torch.tensor(sequence, dtype=torch.float32)
 
-def train(data_path, batch_size):
-    
+
+
+def train(data_paths, batch_size):
     hidden_size = 128
     kernel_size = 7
     learning_rate = 0.001
-    num_epochs = 100
-    
-    # 加载数据
-    point_cloud_data = np.load(data_path) 
-    n, N = point_cloud_data.shape
+    num_epochs = 10
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    # 定义 T 的长度
-    T = 5
-    assert T % 2 == 1, "T 必须是奇数，以便能对称地选择前后帧"
-    padding = T // 2  # 对称 padding，用于从每帧提取前后相邻帧
-    valid_frames = n - 2 * padding  # 可用帧数量
-
-    # 创建 Dataset 实例
-    dataset = PointCloudSequenceDataset(point_cloud_data, T=T)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-    
     # 实例化模型
-    model = LSEncoder(hidden_size=hidden_size, kernel_size=kernel_size)
-    model = model.to('cuda' if torch.cuda.is_available() else 'cpu')
+    model = LSEncoder(hidden_size=hidden_size, kernel_size=kernel_size).to(device)
     
     # 定义损失函数和优化器
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     # 创建 TensorBoard 日志文件夹
-    log_dir = os.path.join("logs", time.strftime("%Y-%m-%d_%H-%M-%S"))
+    log_dir = os.path.join(
+        "/share/home/tj90055/dhj/Self_Feature_LO/src/point_cloud_processing/src/pre_training/logs",
+        time.strftime("%Y-%m-%d_%H-%M-%S")
+    )
     os.makedirs(log_dir, exist_ok=True)
     writer = SummaryWriter(log_dir)
+
+    # 构建数据集
+    T = 5  # 每帧取 T 个帧打包
+
+    # 加载每个数据集并构建 PointCloudSequenceDataset
+    datasets = []
+    for path in data_paths:
+        # 加载点云数据 (n, N)
+        point_cloud_data = np.load(path)
+        column_to_add = np.full((point_cloud_data.shape[0], 1), 35.0)
+        point_cloud_data = np.hstack((point_cloud_data, column_to_add))
+        point_cloud_data[point_cloud_data > 35] = 35.0
+        dataset = PointCloudSequenceDataset(point_cloud_data, T)
+        datasets.append(dataset)
+
+    # 合并多个数据集
+    combined_dataset = ConcatDataset(datasets)
+
+    # 创建 DataLoader 进行随机采样
+    dataloader = DataLoader(combined_dataset, batch_size=batch_size, shuffle=True)
 
     # 训练模型
     for epoch in range(num_epochs):
         model.train()
         running_loss = 0.0
-        
+    
         for step, batch in enumerate(tqdm(dataloader, desc=f"Epoch {epoch+1}/{num_epochs}")):
             # 将数据移到设备
             batch = batch.to('cuda' if torch.cuda.is_available() else 'cpu')
-            
+        
             # 调整形状为 (B, T, N, 1)
             batch = batch.unsqueeze(-1)
-            
+        
             # 前向传播
             output = model(batch)
-            
+        
             # 计算损失：输入和输出的差异
             loss = criterion(output, batch)
-            
+        
             # 反向传播和优化
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            
+        
             running_loss += loss.item()
-            
+        
             # 记录每个步骤的损失到 TensorBoard
             writer.add_scalar('Loss/train', loss.item(), epoch * len(dataloader) + step)
 
@@ -229,6 +255,7 @@ def train(data_path, batch_size):
 
         # 记录每个 epoch 的平均损失
         writer.add_scalar('Loss/train/average', avg_loss, epoch)
+
 
     # 保存编码器参数
     encoder_state_dict = {
@@ -240,14 +267,22 @@ def train(data_path, batch_size):
         "t_encoder3": model.t_encoder3.state_dict(),
         "T_encoder": model.T_encoder.state_dict(),
     }
-
-    torch.save(encoder_state_dict, "encoder_params.pth")
-    print("Encoder parameters saved successfully.")
+    save_path = "/share/home/tj90055/dhj/Self_Feature_LO/src/point_cloud_processing/model/LSencoder/encoder_params.pth"
+    torch.save(encoder_state_dict, save_path)
+    print(f"Encoder parameters saved to {save_path}")
 
     # 关闭 TensorBoard writer
     writer.close()
-        
+
+
 if __name__ == "__main__":
-    data_path = "/share/home/tj90055/dhj/Self_Feature_LO/dianxin6.npy"
+    data_paths = [
+        "/share/home/tj90055/dhj/Self_Feature_LO/dianxin1.npy",
+        "/share/home/tj90055/dhj/Self_Feature_LO/dianxin6.npy",
+        "/share/home/tj90055/dhj/Self_Feature_LO/dianxinb1.npy"
+    ]
     batch_size = 64
-    train(data_path, batch_size)
+    train(data_paths, batch_size)
+
+        
+

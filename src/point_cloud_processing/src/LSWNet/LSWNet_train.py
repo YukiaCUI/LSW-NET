@@ -17,27 +17,13 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import Dataset, DataLoader, ConcatDataset
 
 from attnloss import AttnLoss
+from multi_loss import MultiLoss
 from contrastloss import ContrastLoss
 from LSWEncoderOnly import EncoderOnly
 from LSWNet import LSWNet
+from utils.curvature import compute_curvature_least_squares
 
-class PointCloudSequenceDataset(Dataset):
-    def __init__(self, data, T):
-        self.data = data
-        self.T = T
-        self.padding = T // 2
 
-    def __len__(self):
-        # 总长度为可以提取的序列数
-        return len(self.data) - 2 * self.padding
-
-    def __getitem__(self, idx):
-        # 计算索引范围，中心帧前后各 padding 帧
-        start = idx
-        end = idx + self.T
-        # 从原始数据中提取形状为 (T, N) 的子序列
-        sequence = self.data[start:end]
-        return torch.tensor(sequence, dtype=torch.float32)
 
 def train(data_path, batch_size):
     
@@ -45,28 +31,9 @@ def train(data_path, batch_size):
     kernel_size = 7
     learning_rate = 0.001
     num_epochs = 10    
-
-    # 构建数据集
-    T = 5  # 每帧取 T 个帧打包
-
-    # 加载每个数据集并构建 PointCloudSequenceDataset
-    datasets = []
-    for path in data_paths:
-        # 加载点云数据 (n, N)
-        point_cloud_data = np.load(path)
-        column_to_add = np.full((point_cloud_data.shape[0], 1), 35.0)
-        point_cloud_data = np.hstack((point_cloud_data, column_to_add))
-        point_cloud_data[point_cloud_data > 35] = 35.0
-        dataset = PointCloudSequenceDataset(point_cloud_data, T)
-        datasets.append(dataset)
-
-    # 合并多个数据集
-    combined_dataset = ConcatDataset(datasets)
-
+    data = np.load(data_path)
     # 创建 DataLoader 进行随机采样
-    dataloader = DataLoader(combined_dataset, batch_size=batch_size, shuffle=True)
-
-    
+    dataloader = DataLoader(data, batch_size=batch_size, shuffle=True)
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     # 实例化并加载保存的编码器权重
@@ -89,8 +56,9 @@ def train(data_path, batch_size):
     model = model.to(device)
     
     # 定义损失函数和优化器
-    attnloss = AttnLoss()
+    # attnloss = AttnLoss()
     # contrastloss = ContrastLoss()
+    multi_loss = MultiLoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     # 创建 TensorBoard 日志文件夹
@@ -109,7 +77,11 @@ def train(data_path, batch_size):
             batch = batch.to(device)
             
             # 调整形状为 (B, T, N, 1)
-            inputs = batch.unsqueeze(-1)
+            inputs = batch[...,0].unsqueeze(-1)
+            curvatures = batch[...,1]
+            curvatures = curvatures[:,2,:,:].squeeze(-1)
+            t_mse = batch[...,2]
+            t_mse = t_mse[:,2,:,:].squeeze(-1)
             B, T, N, _ = inputs.shape
 
             # input使用一阶段编码器进行encoder
@@ -120,15 +92,18 @@ def train(data_path, batch_size):
             
             # 调整形状 (B * N // 8, T, -1)-->(B, T, N//8, -1)
             x_encoder = encoder_output.view(B, N//8, T, -1).permute(0, 2, 1, 3).contiguous()
-            weights = model(x_encoder)
+            features = model(x_encoder)
             # feature_2 = model(x_encoder)
             # 计算损失：输入和输出的差异
-            # inputs(B, T, N, 1) weight(B, N, 1)
-            points = inputs[:, 2, :, :].squeeze()
-            weights = weights.squeeze()
+            # inputs(B, T, N, 1) weight(B, T, N)
+            # points = inputs.squeeze()
+
+            # points shape: (B, T, N)
+            # weights(B, N)
             # print(points.shape)
             # print(weights.shape)
-            loss = attnloss(points, weights)
+            # loss = attnloss(points, weights)
+            loss = multi_loss(features, curvatures, t_mse)
 
             # 反向传播和优化
             optimizer.zero_grad()
@@ -136,16 +111,10 @@ def train(data_path, batch_size):
             optimizer.step()  
             running_loss += loss.item()
             # 记录每个步骤的损失到 TensorBoard
-            writer.add_scalar('Loss/train', attnloss.loss.item(), epoch * len(dataloader) + step)
-            # writer.add_scalar('loss_con/train', attnloss.loss_con.item(), epoch * len(dataloader) + step)
-            writer.add_scalar('loss_pos/train', attnloss.loss_pos.item(), epoch * len(dataloader) + step)
-            writer.add_scalar('loss_neg1/train', attnloss.loss_neg1.item(), epoch * len(dataloader) + step)
-            writer.add_scalar('loss_reglex/train', attnloss.loss_reglex.item(), epoch * len(dataloader) + step)
-            writer.add_scalar('loss_tem/train', attnloss.loss_tem.item(), epoch * len(dataloader) + step)
-
-            # writer.add_scalar('Loss/train', contrastloss.loss.item(), epoch * len(dataloader) + step)
-            # writer.add_scalar('desc_loss/train', contrastloss.desc_loss.item(), epoch * len(dataloader) + step)
-            # writer.add_scalar('det_loss/train', contrastloss.det_loss.item(), epoch * len(dataloader) + step)
+            writer.add_scalar('Loss/train', loss.item(), epoch * len(dataloader) + step)
+            writer.add_scalar('loss_spatem/train', multi_loss.loss_spatem.item(), epoch * len(dataloader) + step)
+            writer.add_scalar('loss_consist/train', multi_loss.loss_consist.item(), epoch * len(dataloader) + step)
+            writer.add_scalar('loss_reglex/train', multi_loss.l2_reg_loss.item(), epoch * len(dataloader) + step)
 
         avg_loss = running_loss / len(dataloader)
         print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {avg_loss:.4f}")
@@ -171,10 +140,7 @@ def train(data_path, batch_size):
 
 if __name__ == "__main__":
     data_paths = [
-        "/share/home/tj90055/dhj/Self_Feature_LO/dianxin1.npy",
-        "/share/home/tj90055/dhj/Self_Feature_LO/dianxin6.npy",
-        "/share/home/tj90055/dhj/Self_Feature_LO/dianxinb1.npy"
-    ]
+        "/share/home/tj90055/dhj/Self_Feature_LO/src/point_cloud_processing/src/LSWNet/data/pre_train_data.npy"]
     batch_size = 64
     train(data_paths, batch_size)
 

@@ -1,6 +1,6 @@
 # coding=utf-8 
 import sys
-sys.path.append("/media/cyj/DATA/Self_Feature_LO/src/point_cloud_processing/src")
+sys.path.append("/share/home/tj90055/dhj/Self_Feature_LO/src/point_cloud_processing/src")
 from data import ScanData
 from loss import AttnLoss
 from config import *
@@ -48,15 +48,15 @@ class LSWNet(nn.Module):
 
         # Input (B, T, N, C)
         B, T, N, _ = x.size()
-        x = x.permute(0, 2, 3, 1).contiguous()  # 将形状从 (B, T, N, 1) 改为 (B, N, 1, T)
-        x = x.view(B * N, -1, T)  # 将形状从 (B, N, 1, T) 改为 (B * N, 1, T)
-        # x = alpha_0 * self.avg_pool(output) + alpha_1 * self.max_pool(output)
-        x = self.avg_pool(x).view(B, N, -1).permute(0, 2, 1)
+        # x = x.permute(0, 2, 3, 1).contiguous()  # 将形状从 (B, T, N, 1) 改为 (B, N, 1, T)
+        # x = x.view(B * N, -1, T)  # 将形状从 (B, N, 1, T) 改为 (B * N, 1, T)
+        
+        # x = self.avg_pool(x).view(B, N, -1).permute(0, 2, 1)
+        x = x.squeeze() # 将形状从 (B, T, N, 1) 改为 (B, T, N)
         x = self.conv1(x)
         x = self.conv2(x)
         x = self.conv3(x)
-        #x格式是(B,1,8N)
+        #x格式是(B,T,8N)
         x = self.sigmoid(x)
-        x = x.transpose(1, 2)
        
         return x

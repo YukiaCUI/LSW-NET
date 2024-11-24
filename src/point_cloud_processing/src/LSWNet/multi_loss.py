@@ -22,120 +22,119 @@ import torchvision.datasets as datasets
 import torchvision.models as torchvision_models
 from torch.utils.tensorboard import SummaryWriter
 import random
+from tqdm import tqdm
 
+def generate_random_indices_v2(tensor):
+    B, T, N = tensor.shape
+    device = tensor.device
 
-def far_shuffle(tensor, dim=-1, min_distance=None):
-    """
-    Shuffles a tensor along a specified dimension, ensuring a minimum distance between original and shuffled positions.
+    # 原始索引矩阵
+    original_indices = torch.arange(N, device=device).unsqueeze(0).expand(B * T, N)
 
+    # 生成随机偏移量
+    offset_min = N // 4
+    offset_max = 3 * N // 4
+    random_offsets = torch.randint(offset_min, offset_max, (1, N), device=device)  # 只沿 N 维生成随机偏移
 
-    Args:
-      tensor: The input PyTorch tensor.
-      dim: The dimension along which to shuffle (default: -1, last dimension).
-      min_distance: The minimum distance (in terms of index difference) between original and shuffled positions. If None, a default value is calculated, proportional to the size of dimension `dim`.
+    # 扩展到 (B * T, N)，确保 B 和 T 不变
+    random_offsets = random_offsets.expand(B * T, N)
 
-    Returns:
-      A new tensor with the specified dimension shuffled.  Returns None if shuffling fails or if input is invalid.
-    """
+    # 计算新索引，使用模运算
+    new_indices = (original_indices + random_offsets) % N
 
-    if not isinstance(tensor, torch.Tensor):
-        print("Error: Input must be a PyTorch tensor.")
-        return None
+    # 恢复形状为 (B, T, N)
+    new_indices = new_indices.view(B, T, N)
 
-    shape = list(tensor.shape)
-    n = shape[dim]
-
-    if min_distance is None:
-        min_distance = max(1, n // 4)  #Default: Minimum distance is 1/4 the dimension size
-
-    # Create an index mapping that ensures minimum distance.  This will require iteration in the worst case
-    mapping = _create_distant_mapping(n, min_distance)
-
-    if mapping is None:
-      print("Could not generate distant mapping.")
-      return None
-
-    shuffled_tensor = tensor.clone()
-    permutation = [slice(None)] * len(shape)
-    permutation[dim] = torch.tensor(mapping)
-
-    try:
-      shuffled_tensor = shuffled_tensor[tuple(permutation)]
-
-    except IndexError as e:
-        print(f"Error during tensor reshaping/shuffling. Check dimensions. {e}")
-        return None
+    # 打印调试信息
+    # print("new_indices.shape:", new_indices.shape)
+    # print("new_indices (示例):", new_indices[0, 0])  # 示例打印首批次数据
+    return new_indices
     
-    return shuffled_tensor
-
-def _create_distant_mapping(n, min_distance):
-    """
-    Creates a permutation of indices [0, ..., n-1] ensuring a minimum distance.
-    """
-    mapping = list(range(n))
-    shuffled_indices = []
-    available_indices = list(range(n))
-
-    for i in range(n):
-      
-      #Find candidate indices sufficiently far from existing shuffled positions.
-      valid_candidates = [idx for idx in available_indices if min(abs(idx - x) for x in shuffled_indices) >= min_distance]
-      
-      if not valid_candidates:  #Fail to generate a valid mapping. 
-          return None
-
-
-      new_index = np.random.choice(valid_candidates) #randomly choose the farthest element to avoid bias
-      shuffled_indices.append(new_index)
-      available_indices.remove(new_index)
-
-
-    return shuffled_indices
-
 class MultiLoss(nn.Module):
-    def __init__(self, alpha=0.5, lambda_reg=0.01):
+    def __init__(self, alpha = 1, beta = 1, lambda_reg=0.001):
         super(MultiLoss, self).__init__()
         self.alpha = alpha
+        self.beta = beta
         self.lambda_reg = lambda_reg
         self.loss_spatem = 0
         self.loss_consist = 0
         self.l2_reg_loss = 0
         self.loss = 0
     
-    def get_score(self, curve, tmse, alpha):
+    def get_score(self, curve, tmse):
         # curve shape: (B, N)
         # tmse shape: (B, N)
-        curve_score = curve / torch.max(curve, axis=1, keepdims=True)
-        tmse_score = tmse / torch.max(tmse, axis=1, keepdims=True)
-        
-        return curve * alpha + tmse * (1 - alpha)
+        curve_score = torch.zeros_like(curve)
+        curve_score[curve >= 1] = 1.0
+        mask = curve < 1  # 小于 1 的位置
+        curve_clipped = curve * mask  # 仅保留小于 1 的值，其他值为 0
+        curve_max = torch.max(curve_clipped, dim=1, keepdim=True)[0]
+        curve_max[curve_max == 0] = 1.0  # 避免某些行全为大于等于 1 的情况
+        curve_max = curve_max.expand_as(curve)  # 广播 curve_max 为 (B, N)
+        curve_score[mask] = curve[mask] / curve_max[mask]
 
-    def forward(self, features, curve, tmse):
-        scores = self.get_score(curve, tmse, self.alpha) 
-        weights = features[:, 2, :].squeeze()
+        tmse = torch.sqrt(tmse)
+        tmse_score = torch.zeros_like(tmse)
+        tmse_score[tmse >= 1] = 1.0
+        mask = tmse < 1  # 小于 1 的位置
+        tmse_clipped = tmse * mask  # 仅保留小于 1 的值，其他值为 0
+        tmse_max = torch.max(tmse_clipped, dim=1, keepdim=True)[0]
+        tmse_max[tmse_max == 0] = 1.0  # 避免某些行全为大于等于 1 的情况
+        tmse_max = tmse_max.expand_as(tmse)  # 广播 tmse_max 为 (B, N)
+        tmse_score[mask] = tmse[mask] / tmse_max[mask]
+
+        # 计算每个批次中的 N 个值的和
+        curve_sum = curve_score.sum(dim=1, keepdim=True)  # Shape: (B, 1)
+        tmse_sum = tmse_score.sum(dim=1, keepdim=True)    # Shape: (B, 1)
+
+        # 动态调整 alpha，使得 curve 和 tmse 的和在每个批次上相等
+        alpha = tmse_sum / (curve_sum + tmse_sum + 1e-8)  # 避免除零
+
+        # 最终得分
+        score = curve_score * alpha + tmse_score * (1 - alpha)
+        
+        return score
+
+    def forward(self, features, weights, curve, tmse):
+        scores = self.get_score(curve, tmse) 
+        # print("scores.shape: ", scores.shape)
+        weight = weights[:, 2, :].squeeze()
+        
+        # 加上 features1 和 features2 
 
         B, T, N = features.shape
-        Ai = features[:, 2, :]
+        Ai = features[:, 2, :].squeeze()
         Bi = (torch.sum(features, axis=1)-Ai) / (T-1)
-        shuffled_features = far_shuffle(features, dim=2, min_distance=N//4)
-        Aj = shuffled_features[:, 2, :]
-
+        # print(f"Bi.shape: {Bi.shape}")
+        indices = generate_random_indices_v2(features)
+        # 使用 gather 获取新的特征
+        new_features = torch.gather(features, dim=2, index=indices) #dim=2  N维度
+        Aj = new_features[:, 2, :].squeeze()
+        # shuffled_features = shuffle_n_dim_with_min_distance(features)
+     
+        # Aj = shuffled_features[:, 2, :]
+        # if torch.isnan(Ai).any() or torch.isnan(Bi).any():
+        #   print("NaN detected in Ai or Bi")
+        # if torch.isinf(Ai).any() or torch.isinf(Bi).any():
+        #     print("Inf detected in Ai or Bi")
         dpos = torch.abs(Ai - Bi)
         dneg = torch.abs(Ai - Aj)
 
         mse_loss = nn.MSELoss()
-        self.loss_spatem = mse_loss(weights, scores)
-        self.loss_consist = (dpos - dneg) * weights.mean()
-        self.loss = self.loss_spatem + self.loss_consist
+        self.loss_spatem = mse_loss(weight, scores) * self.beta
+        # print("loss_spatem: ",self.loss_spatem.shape)
+        self.loss_consist = ((dpos - dneg) * weight).mean() * self.alpha
+        # print("loss_consist: ",self.loss_consist.shape)
+        self.loss = self.loss_spatem  + self.loss_consist
         
         # L2 Regularization on features
         # Compute the L2 norm of the features tensor (excluding batch dimension)
-        features_flattened = features.view(-1, N)  # Flatten the tensor (B*T, N) for norm calculation
-        self.l2_reg_loss = torch.norm(features_flattened, p=2)  # L2 regularization (sum of squares)
-
+        # features_flattened = features.view(-1, N)  # Flatten the tensor (B*T, N) for norm calculation
+        # self.l2_reg_loss = torch.norm(features_flattened, p=2)  # L2 regularization (sum of squares)
+        # print("l2_reg_loss: ",self.l2_reg_loss.shape)
         # Apply regularization
-        self.loss += self.lambda_reg * self.l2_reg_loss  # Add L2 regularization
-
+        # self.loss += self.lambda_reg * self.l2_reg_loss # Add L2 regularization
+        
         return self.loss
          
 

@@ -1,2 +1,1 @@
-# Self_Feature_LO
-first
+# LSW-Net

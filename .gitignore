@@ -9,3 +9,5 @@ logs/
 *.pth
 *.pyc
 *.npy
+
+__pycache__/

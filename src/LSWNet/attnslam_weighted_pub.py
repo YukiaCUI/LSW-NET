@@ -5,7 +5,7 @@ import rospy
 from sensor_msgs.msg import LaserScan
 import sys
 sys.path.append("/home/tjark/carto_oringin/src/point_cloud_processing/src") #添加路径，使得后面能够引用该目录下的模块
-from config import *       #导入配置文件，包含了训练过程中的各种参数
+from TCNNet.config import *       #导入配置文件，包含了训练过程中的各种参数
 import torch               #用于构建神经网络，torch是PyTorch的核心库，提供了张量操作、自动求导等功能
 import torch.nn as nn      #torch.mm是PyTorch的神经网络模块，提供了各种神经网络层和损失函数的实现
 import torch.nn.functional as F

@@ -4,13 +4,13 @@ import message_filters
 from sensor_msgs.msg import PointCloud2
 from argparse import ArgumentParser
 from sensor_msgs.msg import LaserScan
-from dataplay import ScanData  #导入ScanData类，用于读取数据
-from config import *       #导入配置文件，包含了训练过程中的各种参数
+from data_process.dataplay import ScanData  #导入ScanData类，用于读取数据
+from TCNNet.config import *       #导入配置文件，包含了训练过程中的各种参数
 import torch               #用于构建神经网络，torch是PyTorch的核心库，提供了张量操作、自动求导等功能
 import torch.nn as nn      #torch.mm是PyTorch的神经网络模块，提供了各种神经网络层和损失函数的实现
 import torch.nn.functional as F
 import json                #用于处理json格式的数据
-from TCN_model import * 
+from TCNNet.TCN_model import * 
 
 def laser_callback(msg):
     # 处理激光点云数据

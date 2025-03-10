@@ -1,9 +1,9 @@
 # coding=utf-8 
 import sys
 sys.path.append("/share/home/tj90055/dhj/Self_Feature_LO/src/point_cloud_processing/src")
-from data import ScanData
-from loss import AttnLoss
-from config import *
+from data_process.data import ScanData
+from TCNNet.loss import AttnLoss
+from TCNNet.config import *
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

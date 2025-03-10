@@ -1,6 +1,6 @@
 import sys
 sys.path.append("/home/shiwb/AttnSlam/src")
-from config import *
+from TCNNet.config import *
 
 import torch
 import torch.nn as nn
